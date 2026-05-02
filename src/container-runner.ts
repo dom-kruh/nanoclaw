@@ -130,7 +130,7 @@ async function spawnContainer(session: Session): Promise<void> {
   // Resolve the effective provider + any host-side contribution it declares
   // (extra mounts, env passthrough). Computed once and threaded through both
   // buildMounts and buildContainerArgs so side effects (mkdir, etc.) fire once.
-  const { provider, contribution } = resolveProviderContribution(session, agentGroup, containerConfig);
+  const { contribution } = resolveProviderContribution(session, agentGroup, containerConfig);
 
   const mounts = buildMounts(agentGroup, session, containerConfig, contribution);
   const containerName = `nanoclaw-v2-${agentGroup.folder}-${Date.now()}`;
@@ -142,7 +142,6 @@ async function spawnContainer(session: Session): Promise<void> {
     containerName,
     agentGroup,
     containerConfig,
-    provider,
     contribution,
     agentIdentifier,
   );
@@ -429,7 +428,6 @@ async function buildContainerArgs(
   containerName: string,
   agentGroup: AgentGroup,
   containerConfig: import('./container-config.js').ContainerConfig,
-  provider: string,
   providerContribution: ProviderContainerContribution,
   agentIdentifier?: string,
 ): Promise<string[]> {
