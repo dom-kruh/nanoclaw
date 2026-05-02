@@ -456,6 +456,7 @@ async function buildContainerArgs(
   if (!onecliApplied) {
     throw new Error('OneCLI gateway not applied — refusing to spawn container without credentials');
   }
+  normalizeOneCliCaMounts(args);
   log.info('OneCLI gateway applied', { containerName });
 
   // Host gateway
@@ -488,6 +489,32 @@ async function buildContainerArgs(
   args.push('-c', 'exec bun run /app/src/index.ts');
 
   return args;
+}
+
+/**
+ * OneCLI's SDK writes proxy CA files to the host OS temp directory and mounts
+ * them into the agent container. Docker Desktop on macOS can silently turn
+ * private temp-file bind mounts into empty directories, which makes Node see
+ * NODE_EXTRA_CA_CERTS but fail to load the certificate. Copy those CA bundles
+ * into the project data directory first, which is already shared with Docker.
+ */
+function normalizeOneCliCaMounts(args: string[]): void {
+  const caDir = path.join(DATA_DIR, 'onecli-ca');
+
+  for (let i = 0; i < args.length - 1; i++) {
+    if (args[i] !== '-v') continue;
+
+    const mount = args[i + 1];
+    if (!mount.includes('onecli-proxy-ca.pem') && !mount.includes('onecli-combined-ca.pem')) continue;
+
+    const [source, destination, mode] = mount.split(':');
+    if (!source || !destination || !fs.existsSync(source) || !fs.statSync(source).isFile()) continue;
+
+    fs.mkdirSync(caDir, { recursive: true });
+    const stableSource = path.join(caDir, path.basename(source));
+    fs.copyFileSync(source, stableSource);
+    args[i + 1] = [stableSource, destination, mode].filter(Boolean).join(':');
+  }
 }
 
 /** Build a per-agent-group Docker image with custom packages. */
