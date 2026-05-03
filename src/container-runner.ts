@@ -15,6 +15,9 @@ import {
   CONTAINER_INSTALL_LABEL,
   DATA_DIR,
   GROUPS_DIR,
+  ANTHROPIC_API_KEY,
+  ANTHROPIC_BASE_URL,
+  NANOCLAW_CREDENTIAL_MODE,
   ONECLI_API_KEY,
   ONECLI_URL,
   TIMEZONE,
@@ -46,6 +49,7 @@ import {
 import type { AgentGroup, Session } from './types.js';
 
 const onecli = new OneCLI({ url: ONECLI_URL, apiKey: ONECLI_API_KEY });
+const useDirectProviderCredentials = NANOCLAW_CREDENTIAL_MODE === 'direct';
 
 /** Active containers tracked by session ID. */
 const activeContainers = new Map<string, { process: ChildProcess; containerName: string }>();
@@ -444,20 +448,34 @@ async function buildContainerArgs(
     }
   }
 
+  if (useDirectProviderCredentials) {
+    if (!ANTHROPIC_API_KEY) {
+      throw new Error('NANOCLAW_CREDENTIAL_MODE=direct requires ANTHROPIC_API_KEY');
+    }
+    args.push('-e', `ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}`);
+    if (ANTHROPIC_BASE_URL) {
+      args.push('-e', `ANTHROPIC_BASE_URL=${ANTHROPIC_BASE_URL}`);
+    }
+  }
+
   // OneCLI gateway — injects HTTPS_PROXY + certs so container API calls
   // are routed through the agent vault for credential injection. Treated as
   // a transient hard failure: if we can't wire the gateway, we don't spawn.
   // The caller (router or host-sweep) catches the throw, leaves the inbound
   // message pending, and the next sweep tick retries.
-  if (agentIdentifier) {
-    await onecli.ensureAgent({ name: agentGroup.name, identifier: agentIdentifier });
+  if (!useDirectProviderCredentials) {
+    if (agentIdentifier) {
+      await onecli.ensureAgent({ name: agentGroup.name, identifier: agentIdentifier });
+    }
+    const onecliApplied = await onecli.applyContainerConfig(args, { addHostMapping: false, agent: agentIdentifier });
+    if (!onecliApplied) {
+      throw new Error('OneCLI gateway not applied — refusing to spawn container without credentials');
+    }
+    normalizeOneCliCaMounts(args);
+    log.info('OneCLI gateway applied', { containerName });
+  } else {
+    log.info('Using direct provider credentials', { containerName });
   }
-  const onecliApplied = await onecli.applyContainerConfig(args, { addHostMapping: false, agent: agentIdentifier });
-  if (!onecliApplied) {
-    throw new Error('OneCLI gateway not applied — refusing to spawn container without credentials');
-  }
-  normalizeOneCliCaMounts(args);
-  log.info('OneCLI gateway applied', { containerName });
 
   // Host gateway
   args.push(...hostGatewayArgs());
